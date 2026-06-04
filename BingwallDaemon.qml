@@ -18,8 +18,11 @@ PluginComponent {
                                : Paths.cache + "/bingwall/"
     property string currentMetadataPath:  Paths.cache + "/bingwall/metadata.json"
     property string statusPath:           Paths.cache + "/bingwall/status.json"
+    property string statePath:            Paths.cache + "/bingwall/state.json"
     property string forceTriggerPath:     Paths.cache + "/bingwall/force.trigger"
     property string fullImageUrl: ""
+
+    property string lastDailyRefreshDate: ""
 
     property string currentImageSavePath: ""
     property string currentTitle: ""
@@ -60,6 +63,8 @@ PluginComponent {
         onTriggered: {
             console.log("Wallpaper of the day: Daily refresh triggered at scheduled time")
             ToastService.showInfo("Daily wallpaper refresh triggered")
+            root.lastDailyRefreshDate = new Date().toISOString().split("T")[0]
+            saveState()
             wallpaperCheck()
             scheduleDailyRefresh()
         }
@@ -124,6 +129,28 @@ PluginComponent {
         onLoadFailed: error => {}
     }
 
+    FileView {
+        id: stateFile
+        path: root.statePath
+        blockLoading: true
+        blockWrites: true
+        atomicWrites: true
+        onLoadFailed: error => {}
+    }
+
+    Timer {
+        id: dailyCatchUpTimer
+        interval: 5000
+        running: false
+        repeat: false
+        onTriggered: {
+            console.log("Wallpaper of the day: Running deferred daily catch-up refresh")
+            root.lastDailyRefreshDate = new Date().toISOString().split("T")[0]
+            saveState()
+            wallpaperCheck()
+        }
+    }
+
     // -------------------------------------------------------------------------
     // Internal functions
     // -------------------------------------------------------------------------
@@ -148,6 +175,7 @@ PluginComponent {
                             saveMetadata()
                         }
                         readMetadata(bingMetadataFile.text())
+                        readState()
                         wallpaperCheck()
                         updateDailyRefreshTimer()
                         bingwallTimer.start()
@@ -194,8 +222,11 @@ PluginComponent {
         target.setMilliseconds(0)
 
         if (target <= now) {
-            console.log("Wallpaper of the day: Scheduled time already passed, triggering catch-up refresh")
-            wallpaperCheck()
+            const todayStr = now.toISOString().split("T")[0]
+            if (root.lastDailyRefreshDate !== todayStr) {
+                console.log("Wallpaper of the day: Scheduled time already passed, deferring catch-up refresh")
+                dailyCatchUpTimer.start()
+            }
             target.setDate(target.getDate() + 1)
         }
 
@@ -352,6 +383,24 @@ PluginComponent {
         statusFile.setText(JSON.stringify({
             isDownloading: root.isDownloading
         }))
+    }
+
+    function readState() {
+        try {
+            const content = stateFile.text()
+            if (content && content.trim()) {
+                const state = JSON.parse(content)
+                root.lastDailyRefreshDate = state.lastDailyRefreshDate ?? ""
+            }
+        } catch (e) {
+            console.error("Wallpaper of the day: Error reading state:", e)
+        }
+    }
+
+    function saveState() {
+        stateFile.setText(JSON.stringify({
+            lastDailyRefreshDate: root.lastDailyRefreshDate
+        }, null, 2))
     }
 
     function pathExists(path: url, callback) {
